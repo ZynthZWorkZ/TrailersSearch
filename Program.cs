@@ -140,7 +140,7 @@ class Program
         {
             driver.Navigate().GoToUrl(movieUrl);
             
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(5));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(15));
             await Task.Delay(3000);
 
             var videoElement = wait.Until(d => d.FindElement(By.CssSelector("video.jw-video.jw-reset")));
