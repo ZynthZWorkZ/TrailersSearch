@@ -1,4 +1,4 @@
-﻿using OpenQA.Selenium;
+using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 using System.Diagnostics;
@@ -59,7 +59,42 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine("No trailer found for this movie.");
+                    throw new Exception("No trailer found for this movie.");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (yearFilter != null)
+                {
+                    int currentYear = int.Parse(yearFilter);
+                    int nextYear = currentYear - 1;
+                    Console.WriteLine($"Failed with year {currentYear}: {ex.Message}");
+                    Console.WriteLine($"Retrying with year: {nextYear}");
+                    
+                    // Update the search query to replace the year
+                    string newSearchQuery = searchQuery.Replace(currentYear.ToString(), nextYear.ToString());
+                    
+                    // Construct new command
+                    string newCommand = $"dotnet run -- \"{newSearchQuery}\" -year \"{nextYear}\"";
+                    Console.WriteLine($"Running: {newCommand}");
+                    
+                    // Execute the new command
+                    var startInfo = new ProcessStartInfo
+                    {
+                        FileName = "dotnet",
+                        Arguments = $"run -- \"{newSearchQuery}\" -year \"{nextYear}\"",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+
+                    using var process = Process.Start(startInfo);
+                    process.WaitForExit();
+                }
+                else
+                {
+                    throw; // Re-throw if no year filter was specified
                 }
             }
             finally
