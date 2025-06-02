@@ -10,7 +10,7 @@ class Program
         if (args.Length == 0)
         {
             Console.WriteLine("Please provide a movie title to search for.");
-            Console.WriteLine("Usage: dotnet run -- \"movie title\" [-year \"YYYY\"]");
+            Console.WriteLine("Usage: TrailerSearch.exe \"movie title\" [-year \"YYYY\"]");
             return;
         }
 
@@ -74,15 +74,18 @@ class Program
                     // Update the search query to replace the year
                     string newSearchQuery = searchQuery.Replace(currentYear.ToString(), nextYear.ToString());
                     
+                    // Get the current executable path
+                    string exePath = Process.GetCurrentProcess().MainModule.FileName;
+                    
                     // Construct new command
-                    string newCommand = $"dotnet run -- \"{newSearchQuery}\" -year \"{nextYear}\"";
+                    string newCommand = $"\"{exePath}\" \"{newSearchQuery}\" -year \"{nextYear}\"";
                     Console.WriteLine($"Running: {newCommand}");
                     
                     // Execute the new command
                     var startInfo = new ProcessStartInfo
                     {
-                        FileName = "dotnet",
-                        Arguments = $"run -- \"{newSearchQuery}\" -year \"{nextYear}\"",
+                        FileName = exePath,
+                        Arguments = $"\"{newSearchQuery}\" -year \"{nextYear}\"",
                         UseShellExecute = false,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -137,7 +140,7 @@ class Program
         {
             driver.Navigate().GoToUrl(movieUrl);
             
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(15));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(5));
             await Task.Delay(3000);
 
             var videoElement = wait.Until(d => d.FindElement(By.CssSelector("video.jw-video.jw-reset")));
