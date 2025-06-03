@@ -42,13 +42,19 @@ class Program
 
         searchQuery = searchQuery.Trim();
 
-        // Try to extract year from the search query if not already specified
-        if (yearFilter == null)
+        // Always try to extract year from the search query first
+        var yearMatch = System.Text.RegularExpressions.Regex.Match(searchQuery, @"\b(19|20)\d{2}\b$");
+        if (yearMatch.Success)
         {
-            var yearMatch = System.Text.RegularExpressions.Regex.Match(searchQuery, @"\b(19|20)\d{2}\b$");
-            if (yearMatch.Success)
+            // If year is in title and matches -year parameter, use it
+            if (yearFilter == null || yearMatch.Value == yearFilter)
             {
                 yearFilter = yearMatch.Value;
+                searchQuery = searchQuery.Substring(0, yearMatch.Index).Trim();
+            }
+            // If year in title doesn't match -year parameter, remove it from search
+            else
+            {
                 searchQuery = searchQuery.Substring(0, yearMatch.Index).Trim();
             }
         }
@@ -58,6 +64,8 @@ class Program
         try
         {
             string? movieUrl = null;
+            string? bestMatchUrl = null;
+            int bestMatchScore = 0;
 
             // First check if we have the URL in imdb_links.txt
             if (File.Exists("imdb_links.txt"))
@@ -83,25 +91,55 @@ class Program
                             cleanTitle = title.Substring(0, titleYearMatch.Index).Trim();
                         }
 
-                        // Clean the search query for comparison
-                        string cleanSearchQuery = searchQuery;
-                        var searchYearMatch = System.Text.RegularExpressions.Regex.Match(searchQuery, @"\b(19|20)\d{2}\b$");
-                        if (searchYearMatch.Success)
+                        // Calculate match score
+                        int matchScore = 0;
+                        
+                        // Exact title match (highest priority)
+                        if (cleanTitle.Equals(searchQuery, StringComparison.OrdinalIgnoreCase))
                         {
-                            cleanSearchQuery = searchQuery.Substring(0, searchYearMatch.Index).Trim();
+                            matchScore += 100;
+                            
+                            // Year match bonus
+                            if (yearFilter == null || year == yearFilter)
+                            {
+                                matchScore += 50;
+                            }
+                        }
+                        // Contains match (lower priority)
+                        else if (cleanTitle.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                                searchQuery.Contains(cleanTitle, StringComparison.OrdinalIgnoreCase))
+                        {
+                            matchScore += 10;
+                            
+                            // Year match bonus
+                            if (yearFilter == null || year == yearFilter)
+                            {
+                                matchScore += 5;
+                            }
                         }
 
-                        // Check if this is our movie
-                        bool titleMatches = cleanTitle.Equals(cleanSearchQuery, StringComparison.OrdinalIgnoreCase);
-                        bool yearMatches = yearFilter == null || year == yearFilter;
+                        // Update best match if this is better
+                        if (matchScore > bestMatchScore)
+                        {
+                            bestMatchScore = matchScore;
+                            bestMatchUrl = url;
+                        }
 
-                        if (titleMatches && yearMatches)
+                        // If we have a perfect match (exact title + year), use it immediately
+                        if (matchScore >= 150)
                         {
                             movieUrl = url;
-                            Console.WriteLine("Found movie URL in cache!");
+                            Console.WriteLine("Found exact match in cache!");
                             break;
                         }
                     }
+                }
+
+                // If no perfect match was found, use the best match
+                if (movieUrl == null && bestMatchUrl != null)
+                {
+                    movieUrl = bestMatchUrl;
+                    Console.WriteLine("Found best matching movie in cache!");
                 }
             }
 
@@ -168,41 +206,7 @@ class Program
         }
         catch (Exception ex)
         {
-            if (yearFilter != null)
-            {
-                int currentYear = int.Parse(yearFilter);
-                int nextYear = currentYear - 1;
-                Console.WriteLine($"Failed with year {currentYear}: {ex.Message}");
-                Console.WriteLine($"Retrying with year: {nextYear}");
-                
-                // Update the search query to replace the year
-                string newSearchQuery = searchQuery.Replace(currentYear.ToString(), nextYear.ToString());
-                
-                // Get the current executable path
-                string exePath = Process.GetCurrentProcess().MainModule.FileName;
-                
-                // Construct new command
-                string newCommand = $"\"{exePath}\" \"{newSearchQuery}\" -year \"{nextYear}\"";
-                Console.WriteLine($"Running: {newCommand}");
-                
-                // Execute the new command
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = exePath,
-                    Arguments = $"\"{newSearchQuery}\" -year \"{nextYear}\"",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-
-                using var process = Process.Start(startInfo);
-                process.WaitForExit();
-            }
-            else
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
+            Console.WriteLine($"Error: {ex.Message}");
         }
     }
 
@@ -364,7 +368,7 @@ class Program
         }
     }
 
-    static async Task<string> SearchIMDBMovie(IWebDriver driver, string searchQuery, string yearFilter)
+    static async Task<string> SearchIMDBMovie(IWebDriver driver, string searchQuery, string? yearFilter)
     {
         try
         {
@@ -377,6 +381,9 @@ class Program
             var resultsList = wait.Until(d => d.FindElement(By.XPath("/html/body/div[2]/main/div[2]/div[3]/section/div/div[1]/section[2]/div[2]/ul")));
             var movieResults = resultsList.FindElements(By.TagName("li"));
 
+            string? bestMatchUrl = null;
+            int bestMatchScore = 0;
+
             foreach (var result in movieResults)
             {
                 try
@@ -385,22 +392,59 @@ class Program
                     var yearElement = result.FindElement(By.CssSelector("span.ipc-metadata-list-summary-item__li"));
                     string year = yearElement.Text;
 
-                    // If year filter is specified, check if it matches
-                    if (yearFilter != null && year != yearFilter)
+                    // Get the movie link and title
+                    var movieLink = result.FindElement(By.CssSelector("a.ipc-metadata-list-summary-item__t"));
+                    string title = movieLink.Text;
+                    string movieUrl = movieLink.GetAttribute("href");
+
+                    if (string.IsNullOrEmpty(movieUrl))
                     {
                         continue;
                     }
 
-                    // Get the movie link
-                    var movieLink = result.FindElement(By.CssSelector("a.ipc-metadata-list-summary-item__t"));
-                    string movieUrl = movieLink.GetAttribute("href");
-                    
-                    if (!string.IsNullOrEmpty(movieUrl))
+                    if (!movieUrl.StartsWith("http"))
                     {
-                        if (!movieUrl.StartsWith("http"))
+                        movieUrl = "https://www.imdb.com" + movieUrl;
+                    }
+
+                    // Calculate match score
+                    int matchScore = 0;
+
+                    // Exact title match (highest priority)
+                    if (title.Equals(searchQuery, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matchScore += 100;
+                        
+                        // Year match bonus
+                        if (yearFilter == null || year == yearFilter)
                         {
-                            movieUrl = "https://www.imdb.com" + movieUrl;
+                            matchScore += 50;
                         }
+                    }
+                    // Contains match (lower priority)
+                    else if (title.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                            searchQuery.Contains(title, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matchScore += 10;
+                        
+                        // Year match bonus
+                        if (yearFilter == null || year == yearFilter)
+                        {
+                            matchScore += 5;
+                        }
+                    }
+
+                    // Update best match if this is better
+                    if (matchScore > bestMatchScore)
+                    {
+                        bestMatchScore = matchScore;
+                        bestMatchUrl = movieUrl;
+                    }
+
+                    // If we have a perfect match (exact title + year), use it immediately
+                    if (matchScore >= 150)
+                    {
+                        Console.WriteLine($"Found exact match: {title} ({year})");
                         return movieUrl;
                     }
                 }
@@ -408,6 +452,13 @@ class Program
                 {
                     continue;
                 }
+            }
+
+            // If no perfect match was found, use the best match
+            if (bestMatchUrl != null)
+            {
+                Console.WriteLine($"Found best matching movie with score {bestMatchScore}");
+                return bestMatchUrl;
             }
 
             throw new Exception("No matching movie found" + (yearFilter != null ? $" for year {yearFilter}" : ""));
